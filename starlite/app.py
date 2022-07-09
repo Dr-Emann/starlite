@@ -104,10 +104,10 @@ class Starlite(Router):
         self.compression_config = compression_config
         self.plain_routes: Set[str] = set()
         self.plugins = plugins or []
-        self.route_map: RouteMap = RouteMap(app=self)
         self.routes: List[BaseRoute] = []
         self.state = State()
         self.static_paths = set()
+        self.route_map: RouteMap = RouteMap(app=self)
 
         super().__init__(
             dependencies=dependencies,
