@@ -133,4 +133,9 @@ class PythonRouteMap:
         return cur, path_params
 
 
-RouteMap = PythonRouteMap
+try:
+    # pylint: disable=useless-import-alias,unused-import
+    # This tells mypy that we really mean to re-xport the type
+    from .rust_backend import RouteMap as RouteMap
+except ImportError:
+    RouteMap = PythonRouteMap

@@ -11,6 +11,7 @@ dist/
 node_modules/
 results/
 site/
+target/
 
 # files
 *.iml
@@ -18,3 +19,5 @@ site/
 .DS_Store
 .python-version
 coverage.*
+*.so
+*.egg-info/
