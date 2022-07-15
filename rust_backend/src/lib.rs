@@ -1,10 +1,10 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyMapping, PySequence, PyType};
 
-use ahash::AHashMap as HashMap;
-use ahash::AHashSet as HashSet;
 use pyo3::exceptions::PyTypeError;
-use std::collections::HashMap as StdHashMap;
+
+type HashMap<K, V> = std::collections::HashMap<K, V, ahash::RandomState>;
+type HashSet<K> = std::collections::HashSet<K, ahash::RandomState>;
 
 type ASGIApp = PyAny;
 
@@ -100,7 +100,7 @@ fn build_param_set<'a>(
 impl RouteMap {
     fn add_routes_(&mut self, items: &PySequence) -> PyResult<()> {
         let p = items.py();
-        let mut param_strings = HashSet::new();
+        let mut param_strings = HashSet::default();
         for route in items.iter()? {
             let route: &PyAny = route?;
             let base: BaseRoute = route.extract()?;
@@ -262,7 +262,7 @@ struct BaseRoute<'a> {
 
 #[derive(Debug, FromPyObject)]
 struct HttpRoute<'a> {
-    route_handler_map: StdHashMap<&'a str, (&'a PyAny, &'a PyAny)>,
+    route_handler_map: HashMap<&'a str, (&'a PyAny, &'a PyAny)>,
 }
 
 #[derive(Debug, FromPyObject)]
