@@ -1,7 +1,8 @@
+use pyo3::exceptions::PyTypeError;
+use pyo3::gc::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyMapping, PySequence, PyType};
-
-use pyo3::exceptions::PyTypeError;
+use std::mem;
 
 type HashMap<K, V> = std::collections::HashMap<K, V, ahash::RandomState>;
 type HashSet<K> = std::collections::HashSet<K, ahash::RandomState>;
@@ -47,6 +48,14 @@ impl Leaf {
             is_asgi: false,
             static_path: None,
         }
+    }
+
+    fn traverse_python_objects(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.path_parameters)?;
+        for handler in self.asgi_handlers.values() {
+            visit.call(handler)?;
+        }
+        Ok(())
     }
 }
 
@@ -252,6 +261,28 @@ impl RouteMap {
     fn parse_path_params(&self, params: &PyAny, values: &PyList) -> PyResult<Py<PyAny>> {
         self.path_param_parser.call1(params.py(), (params, values))
     }
+
+    fn clear(&mut self) {
+        let node = mem::take(&mut self.param_routes);
+        let mut stack = Vec::new();
+        stack.push(node);
+        while let Some(mut node) = stack.pop() {
+            if let Some(child) = node.placeholder_child.take() {
+                stack.push(*child);
+            }
+            stack.extend(mem::take(&mut node.children).into_values());
+
+            // Node no longer contains any child nodes, will be an empty drop
+            drop(node);
+        }
+    }
+}
+
+impl Drop for RouteMap {
+    // Avoid blowing the stack if the children get too deep
+    fn drop(&mut self) {
+        self.clear();
+    }
 }
 
 #[derive(Debug, FromPyObject)]
@@ -324,6 +355,41 @@ impl RouteMap {
 
     fn __repr__(&self) -> String {
         format!("{:#?}", self)
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.app.static_paths)?;
+        visit.call(&self.app.build_route_middleware_stack)?;
+
+        visit.call(&self.route_types.http)?;
+        visit.call(&self.route_types.websocket)?;
+        visit.call(&self.route_types.asgi)?;
+
+        visit.call(&self.path_param_parser)?;
+
+        for leaf in self.plain_routes.values() {
+            leaf.traverse_python_objects(&visit)?;
+        }
+
+        let mut node_stack: Vec<&Node> = Vec::new();
+        node_stack.push(&self.param_routes);
+
+        while let Some(node) = node_stack.pop() {
+            if let Some(leaf) = &node.leaf {
+                leaf.traverse_python_objects(&visit)?;
+            }
+
+            if let Some(child) = &node.placeholder_child {
+                node_stack.push(child);
+            }
+            node_stack.extend(node.children.values());
+        }
+
+        Ok(())
+    }
+
+    fn __clear__(&mut self) {
+        self.clear();
     }
 
     /// Add an item
