@@ -299,7 +299,7 @@ impl RouteMap {
         })
     }
 
-    fn __repr__(&self, py: Python<'_>) -> String {
+    fn __repr__(&self) -> String {
         format!("{:#?}", self)
     }
 
