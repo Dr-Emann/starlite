@@ -1,19 +1,15 @@
+mod wrappers;
+
 use pyo3::exceptions::PyTypeError;
 use pyo3::gc::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyMapping, PySequence, PyType};
+use pyo3::types::{PyList, PyMapping, PySequence};
 use std::mem;
+
+use wrappers::{ASGIApp, RouteTypes, StarliteApp};
 
 type HashMap<K, V> = std::collections::HashMap<K, V, ahash::RandomState>;
 type HashSet<K> = std::collections::HashSet<K, ahash::RandomState>;
-
-type ASGIApp = PyAny;
-
-mod exceptions {
-    pyo3::import_exception!(starlite.exceptions, ImproperlyConfiguredException);
-    pyo3::import_exception!(starlite.exceptions, MethodNotAllowedException);
-    pyo3::import_exception!(starlite.exceptions, NotFoundException);
-}
 
 #[pyclass]
 #[derive(Debug)]
@@ -111,14 +107,14 @@ impl RouteMap {
         let p = items.py();
         let mut param_strings = HashSet::default();
         for route in items.iter()? {
-            let route: &PyAny = route?;
-            let base: BaseRoute = route.extract()?;
-            let path = base.path;
-            let path_parameters: Vec<&PyAny> = base.path_parameters.extract()?;
+            let route: wrappers::Route<'_> = route?.extract()?;
+            let path = route.path()?;
+            let path_parameters = route.path_parameters()?;
+            let path_parameters_vec: Vec<&PyAny> = path_parameters.extract()?;
 
             let in_static = self.app.path_in_static(p, path)?;
-            let leaf: &mut Leaf = if !path_parameters.is_empty() || in_static {
-                build_param_set(&path_parameters, &mut param_strings)?;
+            let leaf: &mut Leaf = if !path_parameters_vec.is_empty() || in_static {
+                build_param_set(&path_parameters_vec, &mut param_strings)?;
 
                 let mut node = &mut self.param_routes;
                 for s in split_path(path) {
@@ -138,14 +134,14 @@ impl RouteMap {
                 }
                 // Found where the leaf should be, get it, or add a new one
                 node.leaf
-                    .get_or_insert_with(|| Leaf::new(base.path_parameters.into()))
+                    .get_or_insert_with(|| Leaf::new(path_parameters.into()))
             } else {
                 self.plain_routes
                     .entry(String::from(path))
-                    .or_insert_with(|| Leaf::new(base.path_parameters.into()))
+                    .or_insert_with(|| Leaf::new(path_parameters.into()))
             };
-            if leaf.path_parameters.as_ref(p).ne(base.path_parameters)? {
-                return Err(exceptions::ImproperlyConfiguredException::new_err(
+            if path_parameters.ne(&leaf.path_parameters)? {
+                return Err(wrappers::ImproperlyConfiguredException::new_err(
                     "Routes with conflicting path parameters",
                 ));
             }
@@ -155,27 +151,30 @@ impl RouteMap {
             }
 
             let route_types = &self.route_types;
-            if route.is_instance(route_types.http.as_ref(p))? {
-                let http_route: HttpRoute<'_> = route.extract()?;
-                for (method, (handler, _)) in http_route.route_handler_map {
+            if route_types.is_http(route)? {
+                for item in route.http_handlers()? {
+                    let (method, handler) = item?;
                     leaf.asgi_handlers.insert(
                         HandlerType::from_http_method(method),
-                        self.app.build_route(route, handler)?,
+                        self.app.build_route(route.0, handler)?,
                     );
                 }
-            } else if route.is_instance(route_types.websocket.as_ref(p))? {
-                let SingleHandlerRoute { handler } = route.extract()?;
+            } else if route_types.is_websocket(route)? {
                 leaf.asgi_handlers.insert(
                     HandlerType::Websocket,
-                    self.app.build_route(route, handler)?,
+                    self.app.build_route(route.0, route.handler()?)?,
                 );
-            } else if route.is_instance(route_types.asgi.as_ref(p))? {
-                let SingleHandlerRoute { handler } = route.extract()?;
-                leaf.asgi_handlers
-                    .insert(HandlerType::Asgi, self.app.build_route(route, handler)?);
+            } else if route_types.is_asgi(route)? {
+                leaf.asgi_handlers.insert(
+                    HandlerType::Asgi,
+                    self.app.build_route(route.0, route.handler()?)?,
+                );
                 leaf.is_asgi = true;
             } else {
-                return Err(PyTypeError::new_err("Unknown route type"));
+                let route_type_name = route.0.get_type().name()?;
+                return Err(PyTypeError::new_err(format!(
+                    "Unknown route type {route_type_name}"
+                )));
             }
         }
         Ok(())
@@ -207,7 +206,7 @@ impl RouteMap {
                     .asgi_handlers
                     .get(&HandlerType::from_http_method(scope_method));
                 if handler.is_none() {
-                    return Err(exceptions::MethodNotAllowedException::new_err(()));
+                    return Err(wrappers::MethodNotAllowedException::new_err(()));
                 }
                 handler
             } else {
@@ -215,7 +214,7 @@ impl RouteMap {
             }
         };
         let handler: Py<ASGIApp> = handler
-            .ok_or_else(|| exceptions::NotFoundException::new_err(()))?
+            .ok_or_else(|| wrappers::NotFoundException::new_err(()))?
             .clone_ref(py);
         Ok(handler)
     }
@@ -248,11 +247,11 @@ impl RouteMap {
                 continue;
             }
 
-            return Err(exceptions::NotFoundException::new_err(()));
+            return Err(wrappers::NotFoundException::new_err(()));
         }
         let leaf = match &node.leaf {
             Some(leaf) => leaf,
-            None => return Err(exceptions::NotFoundException::new_err(())),
+            None => return Err(wrappers::NotFoundException::new_err(())),
         };
         let list = PyList::new(py, params);
         Ok((leaf, list))
@@ -285,85 +284,28 @@ impl Drop for RouteMap {
     }
 }
 
-#[derive(Debug, FromPyObject)]
-struct BaseRoute<'a> {
-    path: &'a str,
-    path_parameters: &'a PyAny,
-}
-
-#[derive(Debug, FromPyObject)]
-struct HttpRoute<'a> {
-    route_handler_map: HashMap<&'a str, (&'a PyAny, &'a PyAny)>,
-}
-
-#[derive(Debug, FromPyObject)]
-struct SingleHandlerRoute<'a> {
-    #[pyo3(attribute("route_handler"))]
-    handler: &'a PyAny,
-}
-
-#[derive(Debug, FromPyObject)]
-struct StarliteApp {
-    static_paths: Py<PyAny>,
-    build_route_middleware_stack: Py<PyAny>,
-}
-
-impl StarliteApp {
-    fn path_in_static(&self, py: Python<'_>, path: &str) -> PyResult<bool> {
-        self.static_paths.as_ref(py).contains(path)
-    }
-
-    fn build_route(&self, route: &PyAny, handler: &PyAny) -> PyResult<Py<PyAny>> {
-        let py = route.py();
-        self.build_route_middleware_stack
-            .call1(py, (route, handler))
-    }
-}
-
-#[derive(Debug, Clone)]
-struct RouteTypes {
-    http: Py<PyType>,
-    websocket: Py<PyType>,
-    asgi: Py<PyType>,
-}
-
 #[pymethods]
 impl RouteMap {
     #[new]
     fn new(py: Python<'_>, app: StarliteApp) -> PyResult<Self> {
-        let module = py.import("starlite.routes")?;
-        let extract_type = |name: &str| -> PyResult<Py<PyType>> {
-            let any: &PyAny = module.getattr(name)?;
-            Ok(any.downcast::<PyType>()?.into())
-        };
-        let route_types = RouteTypes {
-            http: extract_type("HTTPRoute")?,
-            websocket: extract_type("WebSocketRoute")?,
-            asgi: extract_type("ASGIRoute")?,
-        };
-
         let module = py.import("starlite.parsers")?;
         let path_param_parser = module.getattr("parse_path_params")?.into();
         Ok(Self {
             app,
-            route_types,
+            route_types: RouteTypes::new(py)?,
             path_param_parser,
             param_routes: Node::default(),
             plain_routes: HashMap::default(),
         })
     }
 
-    fn __repr__(&self) -> String {
+    fn __repr__(&self, py: Python<'_>) -> String {
         format!("{:#?}", self)
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        visit.call(&self.app.static_paths)?;
-        visit.call(&self.app.build_route_middleware_stack)?;
-
-        visit.call(&self.route_types.http)?;
-        visit.call(&self.route_types.websocket)?;
-        visit.call(&self.route_types.asgi)?;
+        self.app.visit_python(&visit)?;
+        self.route_types.visit_python(&visit)?;
 
         visit.call(&self.path_param_parser)?;
 
