@@ -156,22 +156,22 @@ impl RouteMap {
                     let (method, handler) = item?;
                     leaf.asgi_handlers.insert(
                         HandlerType::from_http_method(method),
-                        self.app.build_route(route.0, handler)?,
+                        self.app.build_route(route, handler)?,
                     );
                 }
             } else if route_types.is_websocket(route)? {
                 leaf.asgi_handlers.insert(
                     HandlerType::Websocket,
-                    self.app.build_route(route.0, route.handler()?)?,
+                    self.app.build_route(route, route.handler()?)?,
                 );
             } else if route_types.is_asgi(route)? {
                 leaf.asgi_handlers.insert(
                     HandlerType::Asgi,
-                    self.app.build_route(route.0, route.handler()?)?,
+                    self.app.build_route(route, route.handler()?)?,
                 );
                 leaf.is_asgi = true;
             } else {
-                let route_type_name = route.0.get_type().name()?;
+                let route_type_name = route.type_name()?;
                 return Err(PyTypeError::new_err(format!(
                     "Unknown route type {route_type_name}"
                 )));

@@ -19,10 +19,10 @@ impl StarliteApp {
         self.static_paths.as_ref(py).contains(path)
     }
 
-    pub fn build_route(&self, route: &PyAny, handler: &PyAny) -> PyResult<Py<PyAny>> {
-        let py = route.py();
+    pub fn build_route(&self, route: Route, handler: &PyAny) -> PyResult<Py<PyAny>> {
+        let py = route.0.py();
         self.build_route_middleware_stack
-            .call1(py, (route, handler))
+            .call1(py, (route.0, handler))
     }
 
     pub fn visit_python(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
@@ -74,7 +74,7 @@ impl RouteTypes {
 }
 
 #[derive(Debug, Copy, Clone, FromPyObject)]
-pub struct Route<'a>(pub &'a PyAny);
+pub struct Route<'a>(&'a PyAny);
 
 impl<'a> Route<'a> {
     pub fn path(&self) -> PyResult<&'a str> {
@@ -97,5 +97,9 @@ impl<'a> Route<'a> {
             let (name, (handler, _)): (&str, (&PyAny, &PyAny)) = item.extract()?;
             Ok((name, handler))
         }))
+    }
+
+    pub fn type_name(&self) -> PyResult<&'a str> {
+        self.0.get_type().name()
     }
 }
