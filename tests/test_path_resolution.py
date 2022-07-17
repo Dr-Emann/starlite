@@ -1,5 +1,4 @@
 from typing import Any, Callable, Optional, Type
-from uuid import uuid4
 
 import pytest
 from starlette.status import (
@@ -12,7 +11,6 @@ from starlette.status import (
 
 from starlite import (
     Controller,
-    HTTPRouteHandler,
     ImproperlyConfiguredException,
     MediaType,
     delete,
@@ -31,8 +29,8 @@ def root_delete_handler() -> None:
 @pytest.mark.parametrize(
     "request_path, router_path",
     [
-        [f"/path/1/2/sub/{str(uuid4())}", "/path/{first:int}/{second:str}/sub/{third:uuid}"],
-        [f"/path/1/2/sub/{str(uuid4())}/", "/path/{first:int}/{second:str}/sub/{third:uuid}/"],
+        ["/path/1/2/sub/c892496f-b1fd-4b91-bdb8-b46f92df1716", "/path/{first:int}/{second:str}/sub/{third:uuid}"],
+        ["/path/1/2/sub/2535a9cb-6554-4d85-bb3b-ad38362f63c7/", "/path/{first:int}/{second:str}/sub/{third:uuid}/"],
         ["/", "/"],
         ["", ""],
     ],
@@ -87,7 +85,7 @@ def test_path_parsing_with_ambiguous_paths() -> None:
     ],
 )
 def test_root_route_handler(
-    decorator: Type[HTTPRouteHandler], test_path: str, decorator_path: str, delete_handler: Optional[Callable]
+    decorator: Type[get], test_path: str, decorator_path: str, delete_handler: Optional[Callable]
 ) -> None:
     person_instance = PersonFactory.build()
 

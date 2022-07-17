@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Type, Union, cast
 from openapi_schema_pydantic.util import construct_open_api_with_schema_class
 from openapi_schema_pydantic.v3.v3_1_0.open_api import OpenAPI
 from pydantic import validate_arguments
+from pydantic.fields import FieldInfo  # noqa: TC002
 from pydantic.typing import AnyCallable
 from starlette.middleware import Middleware as StarletteMiddleware
 from starlette.middleware.cors import CORSMiddleware
@@ -33,6 +34,7 @@ from starlite.routes import ASGIRoute, BaseRoute, HTTPRoute, WebSocketRoute
 from starlite.signature import SignatureModelFactory
 from starlite.types import (
     AfterRequestHandler,
+    AfterResponseHandler,
     BeforeRequestHandler,
     ControllerRouterHandler,
     ExceptionHandler,
@@ -77,19 +79,21 @@ class Starlite(Router):
         self,
         *,
         after_request: Optional[AfterRequestHandler] = None,
+        after_response: Optional[AfterResponseHandler] = None,
         allowed_hosts: Optional[List[str]] = None,
         before_request: Optional[BeforeRequestHandler] = None,
         cache_config: CacheConfig = DEFAULT_CACHE_CONFIG,
+        compression_config: Optional[CompressionConfig] = None,
         cors_config: Optional[CORSConfig] = None,
         debug: bool = False,
         dependencies: Optional[Dict[str, Provide]] = None,
         exception_handlers: Optional[Dict[Union[int, Type[Exception]], ExceptionHandler]] = None,
         guards: Optional[List[Guard]] = None,
-        compression_config: Optional[CompressionConfig] = None,
         middleware: Optional[List[Middleware]] = None,
         on_shutdown: Optional[List[LifeCycleHandler]] = None,
         on_startup: Optional[List[LifeCycleHandler]] = None,
         openapi_config: Optional[OpenAPIConfig] = DEFAULT_OPENAPI_CONFIG,
+        parameters: Optional[Dict[str, FieldInfo]] = None,
         plugins: Optional[List[PluginProtocol]] = None,
         response_class: Optional[Type[Response]] = None,
         response_headers: Optional[Dict[str, ResponseHeader]] = None,
@@ -110,16 +114,18 @@ class Starlite(Router):
         self.route_map: RouteMap = RouteMap(app=self)
 
         super().__init__(
+            after_request=after_request,
+            after_response=after_response,
+            before_request=before_request,
             dependencies=dependencies,
+            exception_handlers=exception_handlers,
             guards=guards,
+            middleware=middleware,
+            parameters=parameters,
             path="",
             response_class=response_class,
             response_headers=response_headers,
             route_handlers=route_handlers,
-            before_request=before_request,
-            after_request=after_request,
-            middleware=middleware,
-            exception_handlers=exception_handlers,
         )
 
         self.asgi_router = StarliteASGIRouter(on_shutdown=on_shutdown or [], on_startup=on_startup or [], app=self)
@@ -230,15 +236,15 @@ class Starlite(Router):
             route_handler.signature_model = SignatureModelFactory(
                 fn=cast(AnyCallable, route_handler.fn),
                 plugins=self.plugins,
-                provided_dependency_names=route_handler.dependency_name_set,
-            ).model()
+                dependency_names=route_handler.dependency_name_set,
+            ).create_signature_model()
         for provider in list(route_handler.resolve_dependencies().values()):
             if not provider.signature_model:
                 provider.signature_model = SignatureModelFactory(
                     fn=provider.dependency,
                     plugins=self.plugins,
-                    provided_dependency_names=route_handler.dependency_name_set,
-                ).model()
+                    dependency_names=route_handler.dependency_name_set,
+                ).create_signature_model()
 
     def create_openapi_schema_model(self, openapi_config: OpenAPIConfig) -> OpenAPI:
         """
