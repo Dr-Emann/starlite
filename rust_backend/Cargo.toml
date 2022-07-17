@@ -10,3 +10,4 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.16.5", features = ["extension-module"] }
 ahash = "0.7.6"
+smartstring = "1.0"

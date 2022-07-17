@@ -4,6 +4,11 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::gc::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyMapping, PySequence};
+
+// A lot of path segments are probably short
+use smartstring::alias::String;
+use std::string::String as StdString;
+
 use std::mem;
 
 use wrappers::{ASGIApp, RouteTypes, StarliteApp};
@@ -299,7 +304,7 @@ impl RouteMap {
         })
     }
 
-    fn __repr__(&self) -> String {
+    fn __repr__(&self) -> StdString {
         format!("{:#?}", self)
     }
 
